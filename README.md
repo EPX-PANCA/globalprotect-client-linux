@@ -2,6 +2,10 @@
 
 A modern, fast, and sleek GlobalProtect VPN client built with **Tauri**, **React**, and **OpenConnect**. Designed specifically for Linux users who want a native-feeling experience with a system tray indicator and seamless credential management.
 
+<p align="center">
+  <img src="screenshots/main_view.png" alt="GlobalProtect Client Main View" width="300">
+</p>
+
 ![Status: Release](https://img.shields.io/badge/Status-Release-blue?style=for-the-badge)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange?style=for-the-badge)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
