@@ -149,6 +149,8 @@ pub fn run() {
                             let _ = window.set_always_on_top(false);
                         }
                     } else if event.id.as_ref() == "quit" {
+                        // Before exiting, disconnect VPN
+                        let _ = Command::new("sudo").arg("pkill").arg("-f").arg("openconnect").status();
                         app.exit(0);
                     }
                 })
@@ -170,7 +172,7 @@ pub fn run() {
                 .build(app)?;
 
             // Background thread to update status periodically
-            let _ = app.handle().clone();
+            let _ = status_i.clone();
             std::thread::spawn(move || {
                 loop {
                     let connected = {
@@ -221,6 +223,13 @@ pub fn run() {
             save_config,
             load_config
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                // Ensure VPN is killed when application fully exits
+                let _ = Command::new("sudo").arg("pkill").arg("-f").arg("openconnect").status();
+            }
+            _ => {}
+        });
 }

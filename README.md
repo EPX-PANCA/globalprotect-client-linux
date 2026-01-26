@@ -25,7 +25,7 @@ A modern, fast, and sleek GlobalProtect VPN client built with **Tauri**, **React
 1. Download the latest `.deb` package from the [Releases](https://github.com/EPX-PANCA/globalprotect-client-linux/releases) page.
 2. Install it using `apt` to automatically fetch dependencies:
     ```bash
-    sudo apt install ./GlobalProtect_1.2.0_amd64.deb
+    sudo apt install ./GlobalProtect_1.2.1_amd64.deb
     ```
 
 ### Fedora / RHEL / CentOS
