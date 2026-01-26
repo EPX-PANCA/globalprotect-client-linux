@@ -44,7 +44,7 @@
           "libnm0"
         ],
         "files": {
-          "./globalprotect-sudoers": "/etc/sudoers.d/globalprotect"
+          "/etc/sudoers.d/globalprotect": "./globalprotect-sudoers"
         }
       },
       "rpm": {
@@ -56,7 +56,7 @@
           "NetworkManager-libnm"
         ],
         "files": {
-          "./globalprotect-sudoers": "/etc/sudoers.d/globalprotect"
+          "/etc/sudoers.d/globalprotect": "./globalprotect-sudoers"
         }
       }
     }
