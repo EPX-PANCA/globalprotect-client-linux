@@ -1,6 +1,8 @@
 # GlobalProtect Client for Linux 🛡️
 
-A modern, fast, and sleek GlobalProtect VPN client built with **Tauri**, **React**, and **OpenConnect**. Designed specifically for Linux users who want a native-feeling experience with a system tray indicator and seamless credential management.
+A modern, fast, and sleek GlobalProtect VPN client built with **Tauri**, **React**, and **OpenConnect**. 
+
+Designed as a **free, open-source alternative** for the Linux community who need a reliable GlobalProtect connection without the hassle. If you've been looking for a way to connect to your corporate VPN on Linux with a native-feeling experience, smooth system tray integration, and seamless credential management — **this is your solution**.
 
 <p align="center">
   <img src="screenshots/main_view.png" alt="GlobalProtect Client Main View" width="300">
@@ -66,7 +68,7 @@ npm run tauri build
 
 ## Credits 🤝
 
-Developed by **EPX-PANCA**. Powered by [Tauri](https://tauri.app/) and [OpenConnect](https://www.infradead.org/openconnect/).
+Developed by [EPX-PANCA](https://github.com/EPX-PANCA). Powered by [Tauri](https://tauri.app/) and [OpenConnect](https://www.infradead.org/openconnect/).
 
 ---
 *v1.2.1 for Linux*

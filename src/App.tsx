@@ -484,7 +484,7 @@ function App() {
                 A modern desktop client for GlobalProtect VPN, designed specifically for the Linux community.
               </p>
               <p className="text-[10px] text-gp-blue font-bold uppercase tracking-widest">
-                Created by EPX-PANCA
+                Created by <a href="https://github.com/EPX-PANCA" target="_blank" rel="noopener noreferrer" className="hover:underline">EPX-PANCA</a>
               </p>
 
               <div className="space-y-4 px-2 pt-2">
