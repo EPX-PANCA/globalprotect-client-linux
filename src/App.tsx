@@ -483,6 +483,9 @@ function App() {
               <p className="text-xs text-gray-500 px-4 leading-relaxed">
                 A modern desktop client for GlobalProtect VPN, designed specifically for the Linux community.
               </p>
+              <p className="text-[10px] text-gp-blue font-bold uppercase tracking-widest">
+                Created by EPX-PANCA
+              </p>
 
               <div className="space-y-4 px-2 pt-2">
                 <div className="text-left bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
