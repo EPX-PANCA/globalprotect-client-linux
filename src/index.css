@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gp-bezel: #2d2d2d;
+  --color-gp-bg: #f0f0f0;
+  --color-gp-blue: #00a3e0;
+  --color-gp-dark-blue: #005b82;
+  --color-gp-text: #333333;
+  --color-gp-gray: #999999;
+}
+
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #0f172a;
+  background-color: #f8fafc;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-height: 100vh;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+@layer components {
+  .gp-window {
+    @apply bg-gp-bg min-h-screen flex flex-col;
+  }
+
+  .gp-header {
+    @apply bg-white p-4 flex items-center justify-between border-b border-gray-200;
+  }
+
+  .gp-content {
+    @apply p-4 flex-1 flex flex-col items-center justify-center space-y-3 overflow-x-hidden;
+  }
+
+  .gp-input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded focus:border-gp-blue focus:ring-1 focus:ring-gp-blue outline-none transition-all;
+  }
+
+  .gp-button {
+    @apply px-8 py-2 bg-gp-blue text-white rounded hover:bg-gp-dark-blue transition-colors font-medium;
+  }
+
+  .gp-button-secondary {
+    @apply px-4 py-2 text-gp-blue hover:underline font-medium;
+  }
+}
