@@ -1,0 +1,2 @@
+# Allow all users to run openconnect without a password for GlobalProtect VPN
+ALL ALL=(ALL) NOPASSWD: /usr/sbin/openconnect, /usr/bin/openconnect

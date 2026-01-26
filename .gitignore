@@ -30,4 +30,3 @@ src-tauri/binaries/*
 src-tauri/gen/apple
 src-tauri/vpn_config.json
 app-icon.png
-globalprotect-sudoers
