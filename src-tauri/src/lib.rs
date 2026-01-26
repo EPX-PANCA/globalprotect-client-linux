@@ -68,8 +68,13 @@ async fn connect_vpn(
 
 #[tauri::command]
 async fn disconnect_vpn(state: State<'_, VpnState>) -> Result<(), String> {
-    // Kill processes using sudo
-    let _ = Command::new("sudo").arg("pkill").arg("-f").arg("openconnect").spawn();
+    // Use -n (non-interactive) to prevent hanging if password is required
+    let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
+    
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    
+    // Attempt hard kill if still exists
+    let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
     
     let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
     if let Some(mut child) = child_guard.take() {
@@ -81,14 +86,14 @@ async fn disconnect_vpn(state: State<'_, VpnState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn get_vpn_status(_state: State<'_, VpnState>) -> Result<bool, String> {
-    // Check if openconnect process is running
+    // Check if openconnect process is running - use pgreg -f for better match
     let pgrep = Command::new("pgrep").arg("-f").arg("openconnect").output().map_err(|e| e.to_string())?;
     
     if !pgrep.status.success() {
         return Ok(false);
     }
 
-    // Also check if a tun interface exists (more reliable indicator of actual connection)
+    // Also check if a tun interface exists
     let ip_addr = Command::new("ip").arg("addr").arg("show").output().map_err(|e| e.to_string())?;
     let output = String::from_utf8_lossy(&ip_addr.stdout);
     
@@ -135,7 +140,7 @@ pub fn run() {
             let show_i = MenuItem::with_id(app, "show", "Show GlobalProtect", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&status_i, &show_i, &quit_i])?;
 
-            let _ = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("GlobalProtect")
                 .menu(&menu)
@@ -149,8 +154,9 @@ pub fn run() {
                             let _ = window.set_always_on_top(false);
                         }
                     } else if event.id.as_ref() == "quit" {
-                        // Before exiting, disconnect VPN
-                        let _ = Command::new("sudo").arg("pkill").arg("-f").arg("openconnect").status();
+                        // Before exiting, disconnect VPN robustly
+                        let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
+                        let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
                         app.exit(0);
                     }
                 })
@@ -172,8 +178,9 @@ pub fn run() {
                 .build(app)?;
 
             // Background thread to update status periodically
-            let _ = status_i.clone();
+            let app_handle = app.handle().clone();
             std::thread::spawn(move || {
+                let mut last_connected = false;
                 loop {
                     let connected = {
                         let pgrep = Command::new("pgrep").arg("-f").arg("openconnect").output();
@@ -193,7 +200,22 @@ pub fn run() {
 
                     let _ = status_i.set_text(text);
                     
-                    // Simple reconnect check: if not connected, could update icon etc.
+                    // Update tray icon only if status changed
+                    if connected != last_connected {
+                        if let Some(tray) = app_handle.tray_by_id("main-tray") {
+                            if connected {
+                                // Try to load the green icon
+                                if let Ok(img) = tauri::image::Image::from_path("icons/connected.png") {
+                                     let _ = tray.set_icon(Some(img));
+                                }
+                            } else {
+                                // Back to default icon
+                                let _ = tray.set_icon(Some(app_handle.default_window_icon().unwrap().clone()));
+                            }
+                        }
+                        last_connected = connected;
+                    }
+                    
                     std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             });
@@ -228,7 +250,8 @@ pub fn run() {
         .run(|_app_handle, event| match event {
             tauri::RunEvent::ExitRequested { .. } => {
                 // Ensure VPN is killed when application fully exits
-                let _ = Command::new("sudo").arg("pkill").arg("-f").arg("openconnect").status();
+                let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
+                let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
             }
             _ => {}
         });

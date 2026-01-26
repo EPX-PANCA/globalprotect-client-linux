@@ -43,7 +43,7 @@ body {
   }
 
   .gp-header {
-    @apply bg-white p-4 flex items-center justify-between border-b border-gray-200;
+    @apply bg-white px-3 py-2 flex items-center justify-between border-b border-gray-200;
   }
 
   .gp-content {

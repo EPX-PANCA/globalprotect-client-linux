@@ -16,7 +16,8 @@
         "title": "GlobalProtect",
         "width": 288,
         "height": 448,
-        "resizable": false
+        "resizable": false,
+        "center": true
       }
     ],
     "security": {

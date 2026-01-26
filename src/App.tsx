@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -6,7 +6,7 @@ function App() {
   const [portal, setPortal] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [status, setStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [status, setStatus] = useState<"disconnected" | "connecting" | "connected" | "disconnecting">("disconnected");
   const [error, setError] = useState("");
   const [showLogin, setShowLogin] = useState(false);
   const [ocInstalled, setOcInstalled] = useState<boolean | null>(null);
@@ -14,14 +14,17 @@ function App() {
   const [view, setView] = useState<"main" | "settings" | "about">("main");
   const [rememberMe, setRememberMe] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
-  const [isManuallyDisconnected, setIsManuallyDisconnected] = useState(true);
+  const isManuallyDisconnected = useRef(true);
 
   useEffect(() => {
     checkInstallation();
     loadStoredConfig();
-    const interval = setInterval(updateStatus, 3000);
-    return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(updateStatus, 2000); // 2s is better for responsiveness
+    return () => clearInterval(interval);
+  }, [status, retryCount, portal, username, password]); // Depend on relevant state to avoid stale closures
 
   const loadStoredConfig = async () => {
     try {
@@ -47,32 +50,32 @@ function App() {
     try {
       const isRunning = await invoke<boolean>("get_vpn_status");
 
-      if (isRunning) {
-        setStatus("connected");
-        setRetryCount(0); // Reset retries on successful connection
-      } else {
-        if (status === "connected") {
-          // Unexpected disconnection
-          setStatus("disconnected");
-
-          if (!isManuallyDisconnected && retryCount < 5) {
-            const nextRetry = retryCount + 1;
-            setRetryCount(nextRetry);
-            setError(`Connection lost. Retrying (${nextRetry}/5)...`);
-
-            // Wait 5 seconds before retrying
-            setTimeout(() => {
-              handleConnect(true);
-            }, 5000);
-          } else if (!isManuallyDisconnected && retryCount >= 5) {
-            setError("Connection failed after 5 attempts. Please check your network.");
+      setStatus(currentStatus => {
+        if (isRunning) {
+          if (currentStatus !== "connected") {
+            setRetryCount(0);
           }
-        } else if (status === "connecting") {
-          // Wait for connect_vpn to finish or updateStatus to catch it next time
+          return "connected";
         } else {
-          setStatus("disconnected");
+          // If we are currently "connected" and it stops running, start retry logic
+          if (currentStatus === "connected") {
+            if (!isManuallyDisconnected.current && retryCount < 5) {
+              const nextRetry = retryCount + 1;
+              setRetryCount(nextRetry);
+              setError(`Connection lost. Retrying (${nextRetry}/5)...`);
+              setTimeout(() => handleConnect(true), 5000);
+            } else if (!isManuallyDisconnected.current && retryCount >= 5) {
+              setError("Connection failed after 5 attempts.");
+            }
+            return "disconnected";
+          }
+          // If we are already in a transition state, DON'T overwrite it with "disconnected"
+          if (currentStatus === "connecting" || currentStatus === "disconnecting") {
+            return currentStatus;
+          }
+          return "disconnected";
         }
-      }
+      });
     } catch (e) {
       console.error(e);
     }
@@ -82,7 +85,7 @@ function App() {
     setError(""); // Clear previous errors
     if (!isRetry) {
       setRetryCount(0);
-      setIsManuallyDisconnected(false);
+      isManuallyDisconnected.current = false;
     }
 
     if (!portal) {
@@ -122,9 +125,21 @@ function App() {
         }
       });
 
-      // Update status immediately instead of waiting for interval
-      setTimeout(updateStatus, 1000);
-      setTimeout(updateStatus, 3000);
+      // Polling for success with timeout
+      let attempts = 0;
+      const checkInterval = setInterval(async () => {
+        attempts++;
+        const isUp = await invoke<boolean>("get_vpn_status");
+        if (isUp) {
+          setStatus("connected");
+          clearInterval(checkInterval);
+        } else if (attempts > 15) { // 15 seconds timeout
+          clearInterval(checkInterval);
+          setStatus(curr => curr === "connected" ? "connected" : "disconnected");
+          setError("Connection timeout. Please check your credentials/portal.");
+        }
+      }, 1000);
+
     } catch (e: any) {
       setError(e.toString());
       setStatus("disconnected");
@@ -132,14 +147,19 @@ function App() {
   };
 
   const handleDisconnect = async () => {
-    setIsManuallyDisconnected(true);
+    isManuallyDisconnected.current = true;
     setRetryCount(0);
+    setStatus("disconnecting");
     try {
       await invoke("disconnect_vpn");
-      setStatus("disconnected");
-      setShowLogin(false);
+      // Give it a moment to clear
+      setTimeout(() => {
+        setStatus("disconnected");
+        setShowLogin(false);
+      }, 800);
     } catch (e: any) {
       setError(e.toString());
+      setStatus("connected"); // Revert if failed
     }
   };
 
@@ -165,8 +185,8 @@ function App() {
   return (
     <div className="gp-window font-sans relative">
       <header className="gp-header shadow-sm z-30">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7">
             <svg className="w-full h-full" viewBox="0 0 24 24">
               <defs>
                 <linearGradient id="headerShieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -179,10 +199,10 @@ function App() {
           </div>
           <span className="font-semibold text-gray-700">GlobalProtect</span>
         </div>
-        <div className="flex items-center space-x-2 relative">
+        <div className="relative">
           <button
             onClick={() => setShowMenu(!showMenu)}
-            className={`p-1 hover:bg-gray-100 rounded transition-colors ${showMenu ? 'bg-gray-100 text-gp-blue' : 'text-gray-400'}`}
+            className={`p-1.5 hover:bg-gray-100 rounded transition-colors ${showMenu ? 'bg-gray-100 text-gp-blue' : 'text-gray-400'}`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -196,22 +216,21 @@ function App() {
               <div className="absolute right-0 top-full mt-1 w-48 bg-white shadow-xl rounded-md border border-gray-100 py-1 z-40">
                 <button
                   onClick={() => { setView("main"); setShowMenu(false); }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gp-bg flex items-center space-x-2"
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gp-bg flex items-center gap-3 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
                   <span>Home</span>
                 </button>
                 <button
                   onClick={() => { setView("settings"); setShowMenu(false); }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gp-bg flex items-center space-x-2"
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gp-bg flex items-center gap-3 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                   <span>Settings</span>
                 </button>
-                <div className="h-px bg-gray-100 my-1"></div>
                 <button
                   onClick={() => { setView("about"); setShowMenu(false); }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gp-bg flex items-center space-x-2"
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gp-bg flex items-center gap-3 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   <span>About</span>
@@ -227,9 +246,10 @@ function App() {
           {/* Globe Animation */}
           <div className="relative mb-4 text-gp-blue transition-all duration-300">
             <div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center transition-all duration-1000 ${status === 'connected' ? 'border-gp-blue shadow-[0_0_20px_rgba(0,163,224,0.4)]' :
-              status === 'connecting' ? 'border-gp-blue animate-pulse' : 'border-gray-200'
+              status === 'connecting' || status === 'disconnecting' ? 'border-gp-blue animate-pulse' : 'border-gray-200'
               }`}>
-              <svg className={`w-14 h-14 transition-colors duration-500 ${status === 'connected' ? 'text-gp-blue' : 'text-gray-300'
+              <svg className={`w-14 h-14 transition-colors duration-500 ${status === 'connected' ? 'text-gp-blue' :
+                status === 'connecting' || status === 'disconnecting' ? 'text-gp-blue/60' : 'text-gray-300'
                 }`} fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
               </svg>
@@ -241,7 +261,8 @@ function App() {
 
           <h2 className="text-xl font-light text-gray-800 mb-1">
             {status === 'connected' ? 'Connected' :
-              status === 'connecting' ? 'Connecting...' : 'Not Connected'}
+              status === 'connecting' ? 'Connecting...' :
+                status === 'disconnecting' ? 'Disconnecting...' : 'Not Connected'}
           </h2>
 
           {status === 'disconnected' && !showLogin && (
@@ -334,21 +355,15 @@ function App() {
             </div>
           )}
 
-          {status === 'connecting' && (
+          {status === 'disconnecting' && (
             <div className="w-full w-full text-center space-y-6">
               <div className="flex flex-col items-center space-y-4">
-                <div className="w-10 h-10 border-4 border-gp-blue border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-10 h-10 border-4 border-gray-300 border-t-gp-blue rounded-full animate-spin"></div>
                 <div className="space-y-1">
-                  <p className="text-gray-600 font-medium tracking-tight">Authenticating...</p>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Please check for password prompts</p>
+                  <p className="text-gray-600 font-medium tracking-tight">Closing connection...</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Stopping openconnect</p>
                 </div>
               </div>
-              <button
-                onClick={handleDisconnect}
-                className="gp-button-secondary text-sm text-gray-400 hover:text-gp-blue"
-              >
-                Cancel
-              </button>
             </div>
           )}
         </main>
@@ -448,8 +463,8 @@ function App() {
       {
         view === "about" && (
           <main className="gp-content animate-in zoom-in-95 duration-300 overflow-y-auto max-h-[calc(100vh-100px)]">
-            <div className="w-full w-full text-center space-y-4">
-              <div className="w-20 h-20 mx-auto mb-4 flex items-center justify-center">
+            <div className="w-full text-center space-y-4">
+              <div className="w-16 h-16 mx-auto mb-2 flex items-center justify-center">
                 <svg className="w-full h-full" viewBox="0 0 24 24">
                   <defs>
                     <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -462,16 +477,42 @@ function App() {
                     fill="url(#shieldGradient)"
                   />
                   <path d="M12 3.3l6.5 2.89v4.81c0 4.38-2.98 8.16-6.5 9.17-3.52-1.01-6.5-4.79-6.5-9.17V6.19L12 3.3z" fill="white" opacity="0.1" />
-                  <circle cx="12" cy="11" r="3" fill="white" opacity="0.2" />
                 </svg>
               </div>
-              <h2 className="text-2xl font-bold text-gray-800">GlobalProtect</h2>
-              <p className="text-sm text-gray-500 font-medium">Developed by EPX-PANCA & OpenConnect</p>
-              <div className="bg-gray-100 p-3 rounded-md text-[10px] text-gray-400 space-y-1 font-mono uppercase tracking-wider">
-                <p>Backend: OpenConnect {ocInstalled ? '(Ready)' : '(Not Found)'}</p>
-                <p>Architecture: x86_64</p>
+              <h2 className="text-xl font-bold text-gray-800">GlobalProtect for Linux</h2>
+              <p className="text-xs text-gray-500 px-4 leading-relaxed">
+                A modern desktop client for GlobalProtect VPN, designed specifically for the Linux community.
+              </p>
+
+              <div className="space-y-4 px-2 pt-2">
+                <div className="text-left bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                  <h3 className="text-[10px] font-bold text-gp-blue uppercase tracking-widest mb-1">Core Engine</h3>
+                  <p className="text-xs text-gray-600 leading-tight">
+                    Powered by <strong>OpenConnect</strong>, the open-source client for Cisco's AnyConnect and Palo Alto's GlobalProtect.
+                  </p>
+                  <p className="text-[9px] text-gray-400 mt-1 italic">Special thanks to the OpenConnect community.</p>
+                </div>
+
+                <div className="text-left bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                  <h3 className="text-[10px] font-bold text-gp-blue uppercase tracking-widest mb-1">Framework</h3>
+                  <p className="text-xs text-gray-600 leading-tight">
+                    Built with <strong>Tauri</strong> and <strong>React</strong> for a lightweight and secure desktop experience.
+                  </p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-md text-[9px] text-gray-400 space-y-1 font-mono uppercase tracking-wider text-left border border-gray-100">
+                  <div className="flex justify-between">
+                    <span>Backend</span>
+                    <span className={ocInstalled ? "text-green-600 font-bold" : "text-red-500"}>{ocInstalled ? 'OpenConnect Ready' : 'OC Not Found'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Architecture</span>
+                    <span>x86_64 Linux</span>
+                  </div>
+                </div>
               </div>
-              <button onClick={() => setView("main")} className="gp-button-secondary text-sm font-bold">Back to Home</button>
+
+              <button onClick={() => setView("main")} className="gp-button-secondary text-xs font-bold py-2 px-6">Back to Dashboard</button>
             </div>
           </main>
         )
@@ -483,7 +524,7 @@ function App() {
             <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
           </svg>
         </a>
-        <span className="text-[8px]">v1.2.1 GP - Clone</span>
+        <span className="text-[8px]">v1.2.1 for Linux</span>
       </footer>
     </div >
   );
