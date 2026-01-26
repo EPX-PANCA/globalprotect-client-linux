@@ -69,4 +69,4 @@ npm run tauri build
 Developed by **EPX-PANCA**. Powered by [Tauri](https://tauri.app/) and [OpenConnect](https://www.infradead.org/openconnect/).
 
 ---
-*Disclaimer: This is an unofficial client for GlobalProtect VPN.*
+*v1.2.1 for Linux*

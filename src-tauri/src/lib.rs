@@ -68,13 +68,13 @@ async fn connect_vpn(
 
 #[tauri::command]
 async fn disconnect_vpn(state: State<'_, VpnState>) -> Result<(), String> {
-    // Use -n (non-interactive) to prevent hanging if password is required
-    let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
+    // Use absolute path for pkill as defined in sudoers
+    let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-f").arg("openconnect").status();
     
     std::thread::sleep(std::time::Duration::from_millis(300));
     
     // Attempt hard kill if still exists
-    let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
+    let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-9").arg("-f").arg("openconnect").status();
     
     let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
     if let Some(mut child) = child_guard.take() {
@@ -155,8 +155,8 @@ pub fn run() {
                         }
                     } else if event.id.as_ref() == "quit" {
                         // Before exiting, disconnect VPN robustly
-                        let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
-                        let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
+                        let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-f").arg("openconnect").status();
+                        let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-9").arg("-f").arg("openconnect").status();
                         app.exit(0);
                     }
                 })
@@ -250,8 +250,8 @@ pub fn run() {
         .run(|_app_handle, event| match event {
             tauri::RunEvent::ExitRequested { .. } => {
                 // Ensure VPN is killed when application fully exits
-                let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-f").arg("openconnect").status();
-                let _ = Command::new("sudo").arg("-n").arg("pkill").arg("-9").arg("-f").arg("openconnect").status();
+                let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-f").arg("openconnect").status();
+                let _ = Command::new("sudo").arg("-n").arg("/usr/bin/pkill").arg("-9").arg("-f").arg("openconnect").status();
             }
             _ => {}
         });
