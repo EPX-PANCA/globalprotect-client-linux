@@ -56,6 +56,6 @@ jobs:
           tagName: v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version
           releaseName: "GlobalProtect v__VERSION__"
           releaseBody: "Automated release from GitHub Actions. Includes .deb, .rpm, and AppImage bundles."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --bundles deb,rpm,appimage
