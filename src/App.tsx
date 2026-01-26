@@ -468,7 +468,6 @@ function App() {
               <h2 className="text-2xl font-bold text-gray-800">GlobalProtect</h2>
               <p className="text-sm text-gray-500 font-medium">Developed by EPX-PANCA & OpenConnect</p>
               <div className="bg-gray-100 p-3 rounded-md text-[10px] text-gray-400 space-y-1 font-mono uppercase tracking-wider">
-                <p>v1.2.0 GP - Clone</p>
                 <p>Backend: OpenConnect {ocInstalled ? '(Ready)' : '(Not Found)'}</p>
                 <p>Architecture: x86_64</p>
               </div>
