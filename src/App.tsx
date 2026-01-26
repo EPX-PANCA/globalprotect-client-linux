@@ -488,7 +488,7 @@ function App() {
                 <div className="text-left bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
                   <h3 className="text-[10px] font-bold text-gp-blue uppercase tracking-widest mb-1">Core Engine</h3>
                   <p className="text-xs text-gray-600 leading-tight">
-                    Powered by <strong>OpenConnect</strong>, the open-source client for Cisco's AnyConnect and Palo Alto's GlobalProtect.
+                    Powered by <a href="https://www.infradead.org/openconnect/" target="_blank" rel="noopener noreferrer" className="text-gp-blue hover:underline font-bold">OpenConnect</a>, the open-source client for Cisco AnyConnect and Palo Alto GlobalProtect.
                   </p>
                   <p className="text-[9px] text-gray-400 mt-1 italic">Special thanks to the OpenConnect community.</p>
                 </div>
@@ -496,7 +496,7 @@ function App() {
                 <div className="text-left bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
                   <h3 className="text-[10px] font-bold text-gp-blue uppercase tracking-widest mb-1">Framework</h3>
                   <p className="text-xs text-gray-600 leading-tight">
-                    Built with <strong>Tauri</strong> and <strong>React</strong> for a lightweight and secure desktop experience.
+                    Built with <a href="https://tauri.app/" target="_blank" rel="noopener noreferrer" className="text-gp-blue hover:underline font-bold">Tauri</a> and <a href="https://react.dev/" target="_blank" rel="noopener noreferrer" className="text-gp-blue hover:underline font-bold">React</a> for a lightweight and secure experience.
                   </p>
                 </div>
 
