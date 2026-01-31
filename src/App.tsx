@@ -737,7 +737,7 @@ const LogsView = ({ onBack }: { onBack: () => void }) => {
         </div>
 
         <p className="text-[10px] text-gray-400 text-center italic">
-          Logs are stored locally at <code className="bg-gray-100 px-1 rounded text-gray-500 not-italic">~/.local/share/globalprotect/logs/</code>
+          Logs are stored locally at <code className="bg-gray-100 px-1 rounded text-gray-500 not-italic">~/.local/share/com.globalprotect.clone/logs/</code>
         </p>
       </div>
     </main>
