@@ -7,5 +7,11 @@ fn main() {
     std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     // Force X11 backend to avoid Wayland rendering issues
     std::env::set_var("GDK_BACKEND", "x11");
+    
+    // Explicitly set the program name for Wayland/DE grouping
+    // This helps match the .desktop file (GlobalProtect)
+    glib::set_prgname(Some("globalprotect"));
+    glib::set_application_name("GlobalProtect");
+
     globalprotect_lib::run()
 }
