@@ -11,14 +11,23 @@ function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [ocInstalled, setOcInstalled] = useState<boolean | null>(null);
   const [showMenu, setShowMenu] = useState(false);
-  const [view, setView] = useState<"main" | "settings" | "about">("main");
+  const [view, setView] = useState<"main" | "settings" | "about" | "logs">("main");
   const [rememberMe, setRememberMe] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [autoConnect, setAutoConnect] = useState(false);
   const isManuallyDisconnected = useRef(true);
+  const statusRef = useRef(status);
+  const [hasPermissionIssue, setHasPermissionIssue] = useState(false);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   useEffect(() => {
     checkInstallation();
     loadStoredConfig();
+    checkPermissions();
   }, []);
 
   useEffect(() => {
@@ -26,14 +35,28 @@ function App() {
     return () => clearInterval(interval);
   }, [status, retryCount, portal, username, password]); // Depend on relevant state to avoid stale closures
 
+
   const loadStoredConfig = async () => {
     try {
-      const config = await invoke<{ portal: string, username: string, password?: string } | null>("load_config");
+      const config = await invoke<{ portal: string, username: string, password?: string, notifications_enabled?: boolean, auto_connect?: boolean } | null>("load_config");
       if (config) {
         setPortal(config.portal);
         setUsername(config.username);
         if (config.password) {
           setPassword(config.password);
+        }
+        if (config.notifications_enabled !== undefined && config.notifications_enabled !== null) {
+          setNotificationsEnabled(config.notifications_enabled);
+        }
+        if (config.auto_connect !== undefined && config.auto_connect !== null) {
+          setAutoConnect(config.auto_connect);
+          // If auto-connect is enabled and we have everything we need, try to connect
+          if (config.auto_connect && config.portal && config.username && config.password) {
+            // Use setTimeout to ensure state is settled
+            setTimeout(() => {
+              handleConnect(false);
+            }, 1000);
+          }
         }
       }
     } catch (e) {
@@ -46,7 +69,31 @@ function App() {
     setOcInstalled(installed);
   };
 
+  const checkPermissions = async () => {
+    try {
+      // Returns true if permissions are OK (passwordless), false if permission denied (needs password)
+      const isOk = await invoke<boolean>("check_permissions");
+      setHasPermissionIssue(!isOk);
+    } catch (e) {
+      console.error("Failed to check permissions", e);
+      // Assume issue if check fails
+      setHasPermissionIssue(true);
+    }
+  };
+
   const updateStatus = async () => {
+    // If offline, we want to show "Connecting..." (reconnecting) instead of "Connected"
+    // This gives immediate feedback that something is wrong without kicking the user to login.
+    if (!navigator.onLine) {
+      setStatus(prev => {
+        if (prev === 'connected') return 'connecting';
+        return prev;
+      });
+      // We don't return here, we let the logic proceed or just pause retry counting?
+      // If we return, we stop checking pgrep.
+      return;
+    }
+
     try {
       const isRunning = await invoke<boolean>("get_vpn_status");
 
@@ -121,7 +168,9 @@ function App() {
         config: {
           portal,
           username,
-          password: rememberMe ? password : null
+          password: rememberMe ? password : null,
+          notifications_enabled: notificationsEnabled,
+          auto_connect: autoConnect
         }
       });
 
@@ -162,6 +211,33 @@ function App() {
       setStatus("connected"); // Revert if failed
     }
   };
+
+  // Listen for network events
+  useEffect(() => {
+    const handleOffline = () => {
+      // When offline, switch to 'connecting' to indicate we are waiting for network
+      if (statusRef.current === 'connected') {
+        setStatus("connecting");
+        setError("Network connection lost. Waiting for internet...");
+      }
+    };
+
+    const handleOnline = () => {
+      // When back online, if we were waiting (connecting) and not manually disconnected, try to reconnect
+      if (statusRef.current === 'connecting' && !isManuallyDisconnected.current) {
+        // Add a small delay to ensure network interfaces are up
+        setTimeout(() => handleConnect(true), 1000);
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [handleConnect]); // handleConnect is a dependency
+
 
   if (ocInstalled === false) {
     return (
@@ -227,6 +303,13 @@ function App() {
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                   <span>Settings</span>
+                </button>
+                <button
+                  onClick={() => { setView("logs"); setShowMenu(false); }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gp-bg flex items-center gap-3 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <span>Logs</span>
                 </button>
                 <button
                   onClick={() => { setView("about"); setShowMenu(false); }}
@@ -418,7 +501,13 @@ function App() {
                       onClick={async () => {
                         try {
                           await invoke("save_config", {
-                            config: { portal, username, password: rememberMe ? password : null }
+                            config: {
+                              portal,
+                              username,
+                              password: rememberMe ? password : null,
+                              notifications_enabled: notificationsEnabled,
+                              auto_connect: autoConnect
+                            }
                           });
                           alert("Settings saved successfully!");
                         } catch (e) {
@@ -434,23 +523,45 @@ function App() {
 
                 <div className="h-px bg-gray-100"></div>
 
-                <div>
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Security</h3>
-                  <p className="text-[10px] text-gray-500 mb-3 leading-relaxed">
-                    To connect without entering your root password every time, run this command in your terminal:
-                  </p>
-                  <div className="bg-gray-900 p-2 rounded text-[9px] font-mono text-blue-300 break-all mb-2 flex justify-between items-center group">
-                    <span>echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/openconnect" | sudo tee /etc/sudoers.d/globalprotect</span>
+                {hasPermissionIssue && (
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Security</h3>
+                    <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-lg mb-3">
+                      <p className="text-[10px] text-yellow-700 font-medium flex items-center gap-2 mb-1">
+                        <span className="text-xl">⚠️</span>
+                        Root permissions required
+                      </p>
+                      <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                        To fix this, please run the following command to allow GlobalProtect to run without a password:
+                      </p>
+                      <div className="bg-gray-900 p-2 rounded text-[9px] font-mono text-blue-300 break-all flex justify-between items-center group relative">
+                        <span>echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/openconnect" | sudo tee /etc/sudoers.d/globalprotect</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="h-px bg-gray-100"></div>
+                {hasPermissionIssue && <div className="h-px bg-gray-100"></div>}
 
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Preferences</h3>
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Display Notifications</span>
-                    <div className="w-10 h-5 bg-gp-blue rounded-full relative"><div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full"></div></div>
+                    <button
+                      onClick={() => setNotificationsEnabled(!notificationsEnabled)}
+                      className={`w-10 h-5 rounded-full relative transition-colors duration-200 focus:outline-none ${notificationsEnabled ? 'bg-gp-blue' : 'bg-gray-300'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 ${notificationsEnabled ? 'right-0.5' : 'left-0.5'}`}></div>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Auto-Connect on Startup</span>
+                    <button
+                      onClick={() => setAutoConnect(!autoConnect)}
+                      className={`w-10 h-5 rounded-full relative transition-colors duration-200 focus:outline-none ${autoConnect ? 'bg-gp-blue' : 'bg-gray-300'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 ${autoConnect ? 'right-0.5' : 'left-0.5'}`}></div>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -458,6 +569,10 @@ function App() {
             </div>
           </main>
         )
+      }
+
+      {
+        view === "logs" && <LogsView onBack={() => setView("main")} />
       }
 
       {
@@ -527,10 +642,106 @@ function App() {
             <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
           </svg>
         </a>
-        <span className="text-[8px]">v1.2.1 for Linux</span>
+        <span className="text-[8px]">v1.2.2 for Linux</span>
       </footer>
     </div >
   );
 }
+
+const LogsView = ({ onBack }: { onBack: () => void }) => {
+  const [logs, setLogs] = useState("Loading logs...");
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLogs = async () => {
+      try {
+        const content = await invoke<string>("read_logs");
+        if (isMounted) {
+          setLogs(content);
+        }
+      } catch (e) {
+        if (isMounted) setLogs("Failed to load logs: " + e);
+      }
+    };
+
+    fetchLogs();
+    const interval = setInterval(fetchLogs, 2000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Auto-scroll effect when logs change
+  useEffect(() => {
+    const el = document.getElementById("log-viewer");
+    if (el) {
+      // Auto-scroll if near bottom or initial load
+      const isScrolledToBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 100;
+      if (isScrolledToBottom || logs.length < 1000) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, [logs]);
+
+  const handleClear = async () => {
+    try {
+      await invoke("clear_logs");
+      setLogs("");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <main className="gp-content animate-in slide-in-from-right duration-300 !justify-start pt-8 overflow-y-auto max-h-[calc(100vh-100px)]">
+      <div className="w-full w-full space-y-6">
+        {/* Header - Matching Settings View */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-2">
+            <button onClick={onBack} className="p-1 hover:bg-gray-100 rounded text-gray-400">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <h2 className="text-xl font-semibold text-gray-800">Connection Logs</h2>
+          </div>
+          <button
+            onClick={handleClear}
+            className="text-xs text-red-500 hover:text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            Clear
+          </button>
+        </div>
+
+        {/* Terminal Window */}
+        <div className="bg-[#1e1e1e] rounded-lg shadow-md border border-gray-700 flex flex-col overflow-hidden">
+          {/* Terminal Header */}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[#2d2d2d] border-b border-gray-700 select-none">
+            <div className="text-[10px] text-gray-400 font-mono">vpn.log</div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+              <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Live</span>
+            </div>
+          </div>
+
+          {/* Terminal Content */}
+          <div className="relative h-64">
+            <pre
+              id="log-viewer"
+              className="absolute inset-0 p-3 overflow-auto text-[10px] font-mono leading-relaxed text-gray-300 whitespace-pre-wrap break-all custom-scrollbar selection:bg-gray-700 selection:text-white"
+              style={{ fontFamily: "monospace" }}
+            >
+              {logs || <span className="text-gray-500 italic">No logs available.</span>}
+            </pre>
+          </div>
+        </div>
+
+        <p className="text-[10px] text-gray-400 text-center italic">
+          Logs are stored locally at <code className="bg-gray-100 px-1 rounded text-gray-500 not-italic">~/.local/share/globalprotect/logs/</code>
+        </p>
+      </div>
+    </main>
+  );
+};
 
 export default App;

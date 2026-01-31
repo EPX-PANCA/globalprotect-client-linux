@@ -14,6 +14,9 @@ Designed as a **free, open-source alternative** for the Linux community who need
 
 ## Key Features ✨
 
+-   **Connection Logs**: Real-time log viewer to monitor connection status and troubleshoot issues.
+-   **Enhanced Connectivity**: Auto-reconnect logic handles network interruptions gracefully.
+-   **Security Checks**: Built-in validation allows you to fix permission issues effortlessly.
 -   **Zero-Password Connection**: No root password prompt every time you connect (via automated security policy).
 -   **System Tray Integration**: Live connection status (Connected ✅ / Disconnected ❌) directly in your panel.
 -   **Smart Auto-Connect**: Automatically connects if credentials are saved.
@@ -27,14 +30,14 @@ Designed as a **free, open-source alternative** for the Linux community who need
 1. Download the latest `.deb` package from the [Releases](https://github.com/EPX-PANCA/globalprotect-client-linux/releases) page.
 2. Install it using `apt` to automatically fetch dependencies:
     ```bash
-    sudo apt install ./GlobalProtect_1.2.1_amd64.deb
+    sudo apt install ./GlobalProtect_1.2.2_amd64.deb
     ```
 
 ### Fedora / RHEL / CentOS
 1. Download the latest `.rpm` package from the [Releases](https://github.com/EPX-PANCA/globalprotect-client-linux/releases) page.
 2. Install it using `dnf`:
     ```bash
-    sudo dnf install ./GlobalProtect-1.2.0-1.x86_64.rpm
+    sudo dnf install ./GlobalProtect-1.2.2-1.x86_64.rpm
     ```
 
 ## Post-Installation Security Tip 🔑
@@ -71,4 +74,4 @@ npm run tauri build
 Developed by [EPX-PANCA](https://github.com/EPX-PANCA). Powered by [Tauri](https://tauri.app/) and [OpenConnect](https://www.infradead.org/openconnect/).
 
 ---
-*v1.2.1 for Linux*
+*v1.2.2 for Linux*
