@@ -2,7 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // Fix for blank screen on Wayland/Nvidia
+    // Fix for blank screen on Wayland/Nvidia and newer WebKitGTK
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     globalprotect_lib::run()
 }
