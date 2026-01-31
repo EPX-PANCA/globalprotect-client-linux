@@ -5,5 +5,7 @@ fn main() {
     // Fix for blank screen on Wayland/Nvidia and newer WebKitGTK
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    // Force X11 backend to avoid Wayland rendering issues
+    std::env::set_var("GDK_BACKEND", "x11");
     globalprotect_lib::run()
 }
