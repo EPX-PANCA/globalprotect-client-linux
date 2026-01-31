@@ -187,6 +187,8 @@ async fn check_permissions() -> Result<bool, String> {
         .arg("-n")
         .arg("openconnect")
         .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output()
         .map_err(|e| e.to_string())?;
 
