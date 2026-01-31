@@ -13,5 +13,8 @@ fn main() {
     glib::set_prgname(Some("globalprotect"));
     glib::set_application_name("GlobalProtect");
 
+    // Force software rendering fallback if hardware accel fails (EGL_BAD_PARAMETER)
+    std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+
     globalprotect_lib::run()
 }

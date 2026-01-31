@@ -40,6 +40,18 @@ Designed as a **free, open-source alternative** for the Linux community who need
     sudo dnf install ./GlobalProtect-1.2.2-1.x86_64.rpm
     ```
 
+### AppImage (Universal Linux)
+1. Download the `.AppImage` file.
+2. Make it executable:
+    ```bash
+    chmod +x GlobalProtect_1.2.2_amd64.AppImage
+    ```
+3. Run it:
+    ```bash
+    ./GlobalProtect_1.2.2_amd64.AppImage
+    ```
+    > **Note**: Do not run the AppImage with `sudo`. Instead, follow the security tip below to allow the internal VPN process to run with privileges.
+
 ## Post-Installation Security Tip 🔑
 
 To enable **connection without root password prompts** in development mode or if your installer didn't automatically apply the policy, run this command once:
