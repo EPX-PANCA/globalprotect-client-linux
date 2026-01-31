@@ -51,6 +51,8 @@ Designed as a **free, open-source alternative** for the Linux community who need
     ./GlobalProtect_1.2.2_amd64.AppImage
     ```
     > **Note**: Do not run the AppImage with `sudo`. Instead, follow the security tip below to allow the internal VPN process to run with privileges.
+    >
+    > **Compatibility**: AppImage is primarily tested on **Debian-based** distributions (Ubuntu, Linux Mint, Kali). Fedora/RHEL users are recommended to use the native `.rpm` installer for best results.
 
 ## Post-Installation Security Tip 🔑
 
