@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest]
+        platform: [ubuntu-20.04]
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -31,7 +31,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-latest'
+        if: matrix.platform == 'ubuntu-20.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -53,7 +53,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version
+          tagName: v__VERSION__
           releaseName: "GlobalProtect v__VERSION__"
           releaseBody: "### What's New in v1.2.2 🛡️\n\n- **Connection Logs**: New built-in log viewer to monitor VPN activity in real-time.\n- **Shed Light on Security**: New security check feature guides you to fix `sudo` permission issues easily.\n- **Smarter Connectivity**: Improved auto-reconnect logic handles network interruptions gracefully.\n- **UI Polish**: Refined animations and visual consistency across the app."
           releaseDraft: false
