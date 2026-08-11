@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions: {}
 
@@ -13,6 +14,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     permissions:
       contents: write
     strategy:
@@ -32,6 +34,8 @@ jobs:
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable action
+        with:
+          toolchain: stable
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-24.04'
