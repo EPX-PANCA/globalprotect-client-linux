@@ -30,25 +30,25 @@ Designed as a **free, open-source alternative** for the Linux community who need
 1. Download the latest `.deb` package from the [Releases](https://github.com/EPX-PANCA/globalprotect-client-linux/releases) page.
 2. Install it using `apt` to automatically fetch dependencies:
     ```bash
-    sudo apt install ./GlobalProtect_1.2.4_amd64.deb
+    sudo apt install ./GlobalProtect_1.2.5_amd64.deb
     ```
 
 ### Fedora / RHEL / CentOS
 1. Download the latest `.rpm` package from the [Releases](https://github.com/EPX-PANCA/globalprotect-client-linux/releases) page.
 2. Install it using `dnf`:
     ```bash
-    sudo dnf install ./GlobalProtect-1.2.4-1.x86_64.rpm
+    sudo dnf install ./GlobalProtect-1.2.5-1.x86_64.rpm
     ```
 
 ### AppImage (x86_64 Linux)
 1. Download the `.AppImage` file.
 2. Make it executable:
     ```bash
-    chmod +x GlobalProtect_1.2.4_amd64.AppImage
+    chmod +x GlobalProtect_1.2.5_amd64.AppImage
     ```
 3. Run it:
     ```bash
-    ./GlobalProtect_1.2.4_amd64.AppImage
+    ./GlobalProtect_1.2.5_amd64.AppImage
     ```
     > **Note**: Do not run the AppImage with `sudo`. Instead, follow the security tip below to allow the internal VPN process to run with privileges.
     >
@@ -92,4 +92,4 @@ npm run tauri build
 Developed by [EPX-PANCA](https://github.com/EPX-PANCA). Powered by [Tauri](https://tauri.app/) and [OpenConnect](https://www.infradead.org/openconnect/).
 
 ---
-*v1.2.4 for Linux (x86_64 packages)*
+*v1.2.5 for Linux (x86_64 packages)*

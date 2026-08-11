@@ -63,7 +63,7 @@ jobs:
           test "$(stat -c '%a' src-tauri/globalprotect-helper)" = "755"
           test "$(stat -c '%a' src-tauri/globalprotect-sudoers)" = "440"
           sh -n src-tauri/globalprotect-helper
-          cargo fmt --all -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
           npm audit --audit-level=high
           npm run build
 

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.4] - 2026-08-11
+## [1.2.5] - 2026-08-11
 
 ### Added
 - **Connection Logs**: Introduce a dedicated logs view (`Logs`) accessible from the hamburger menu. Users can now view real-time logs of the VPN connection process in the per-user application data directory.
