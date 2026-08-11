@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+
+owner=${SUDO_UID:-}
+case "$owner" in
+    ""|*[!0-9]*) exit 64 ;;
+esac
+
+pid_file="/run/globalprotect/openconnect-${owner}.pid"
+
+if [ "${1:-}" = "--stop" ] && [ "$#" -eq 1 ]; then
+    if [ ! -r "$pid_file" ]; then
+        exit 0
+    fi
+
+    pid=$(cat "$pid_file")
+    case "$pid" in
+        ""|*[!0-9]*) rm -f "$pid_file"; exit 64 ;;
+    esac
+
+    if [ -r "/proc/$pid/cmdline" ] && tr '\000' ' ' < "/proc/$pid/cmdline" | grep -q '/openconnect '; then
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pid_file"
+    exit 0
+fi
+
+# Keep the privileged surface small: only the fixed GlobalProtect invocation is allowed.
+if [ "${1:-}" = "--check" ] && [ "$#" -eq 1 ]; then
+    for binary in /usr/sbin/openconnect /usr/bin/openconnect; do
+        if [ -x "$binary" ]; then
+            exec "$binary" --version
+        fi
+    done
+    exit 127
+fi
+
+if [ "$#" -ne 2 ]; then
+    exit 64
+fi
+
+portal=$1
+username=$2
+
+# Reject option injection and shell whitespace while allowing normal VPN URLs.
+case "$portal" in
+    ""|-*|*[!A-Za-z0-9./:_?%+\&=-]*) exit 64 ;;
+esac
+
+mkdir -p /run/globalprotect
+printf '%s\n' "$$" > "$pid_file"
+
+for binary in /usr/sbin/openconnect /usr/bin/openconnect; do
+    if [ -x "$binary" ]; then
+        exec "$binary" --protocol=gp --passwd-on-stdin --interface=globalprotect "$portal" "--user=$username"
+    fi
+done
+
+exit 127

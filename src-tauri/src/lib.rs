@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
@@ -17,10 +19,103 @@ struct VpnConfig {
     auto_connect: Option<bool>,
 }
 
+const OPENCONNECT_HELPER: &str = "/usr/libexec/globalprotect/openconnect-helper";
+const VPN_INTERFACE: &str = "globalprotect";
+
+fn sudo_path() -> PathBuf {
+    ["/usr/bin/sudo", "/bin/sudo"]
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("sudo"))
+}
+
+fn openconnect_path() -> Option<PathBuf> {
+    [
+        "/usr/sbin/openconnect",
+        "/usr/bin/openconnect",
+        "/sbin/openconnect",
+        "/bin/openconnect",
+    ]
+    .iter()
+    .map(Path::new)
+    .find(|path| path.is_file())
+    .map(Path::to_path_buf)
+}
+
+fn command_path() -> Result<PathBuf, String> {
+    if Path::new(OPENCONNECT_HELPER).is_file() {
+        Ok(PathBuf::from(OPENCONNECT_HELPER))
+    } else {
+        openconnect_path()
+            .ok_or_else(|| "OpenConnect was not found in /usr/sbin or /usr/bin".to_string())
+    }
+}
+
+fn stop_child(child: &Arc<Mutex<Option<Child>>>) -> Result<(), String> {
+    let mut child_guard = child.lock().map_err(|_| "Failed to lock VPN state")?;
+    if let Some(mut process) = child_guard.take() {
+        let process_id = process.id();
+        let _ = process.kill();
+
+        if !matches!(process.try_wait(), Ok(Some(_))) && Path::new(OPENCONNECT_HELPER).is_file() {
+            let _ = Command::new(sudo_path())
+                .args(["-n", OPENCONNECT_HELPER, "--stop"])
+                .status();
+        }
+
+        for _ in 0..20 {
+            match process.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                Err(_) => break,
+            }
+        }
+
+        *child_guard = Some(process);
+        return Err(format!("Unable to stop VPN process {}", process_id));
+    }
+    Ok(())
+}
+
+fn child_is_running(child: &Arc<Mutex<Option<Child>>>) -> bool {
+    let Ok(mut child_guard) = child.lock() else {
+        return false;
+    };
+
+    let Some(process) = child_guard.as_mut() else {
+        return false;
+    };
+
+    match process.try_wait() {
+        Ok(None) => true,
+        Ok(Some(_)) | Err(_) => {
+            child_guard.take();
+            false
+        }
+    }
+}
+
+fn ensure_private_directory(path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 #[tauri::command]
 async fn check_openconnect() -> Result<bool, String> {
-    let output = Command::new("which")
-        .arg("openconnect")
+    let Some(path) = openconnect_path() else {
+        return Ok(false);
+    };
+
+    let output = Command::new(path)
+        .arg("--version")
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -33,22 +128,24 @@ async fn connect_vpn(
     config: VpnConfig,
     state: State<'_, VpnState>,
 ) -> Result<(), String> {
-    let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
+    stop_child(&state.child)?;
 
-    // Kill existing process if any
-    if let Some(mut existing) = child_guard.take() {
-        let _ = existing.kill();
+    let helper_available = Path::new(OPENCONNECT_HELPER).is_file();
+    let command = command_path()?;
+
+    // -n prevents sudo from consuming the VPN password when the policy is missing.
+    let mut cmd = Command::new(sudo_path());
+    cmd.arg("-n").arg(command);
+    if helper_available {
+        cmd.arg(&config.portal).arg(&config.username);
+    } else {
+        cmd.arg("--protocol=gp")
+            .arg("--passwd-on-stdin")
+            .arg(format!("--interface={VPN_INTERFACE}"))
+            .arg(&config.portal)
+            .arg("--user")
+            .arg(&config.username);
     }
-
-    // Prepare the command
-    // Using sudo instead of pkexec for better scriptability and sudoers support
-    let mut cmd = Command::new("sudo");
-    cmd.arg("openconnect")
-        .arg("--protocol=gp")
-        .arg("--passwd-on-stdin")
-        .arg(&config.portal)
-        .arg("--user")
-        .arg(&config.username);
 
     // Setup logging
     let app_dir = app_handle
@@ -56,19 +153,28 @@ async fn connect_vpn(
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     let logs_dir = app_dir.join("logs");
-    std::fs::create_dir_all(&logs_dir).map_err(|e| e.to_string())?;
-    
+    ensure_private_directory(&logs_dir)?;
+
     let log_path = logs_dir.join("vpn.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut log_options = std::fs::OpenOptions::new();
+    log_options.create(true).append(true);
+    #[cfg(unix)]
+    log_options.mode(0o600);
+    let log_file = log_options
         .open(&log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
-    
+    #[cfg(unix)]
+    log_file
+        .set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
+
     // Log start attempt
-    use std::io::Write;
     if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
-        let _ = writeln!(file, "\n--- Connection Attempt: {} ---", chrono::Local::now());
+        let _ = writeln!(
+            file,
+            "\n--- Connection Attempt: {} ---",
+            chrono::Local::now()
+        );
     }
 
     let stderr_log = log_file.try_clone().map_err(|e| e.to_string())?;
@@ -81,14 +187,15 @@ async fn connect_vpn(
         .spawn()
         .map_err(|e| format!("Failed to start openconnect: {}", e))?;
 
-    // Send password to stdin
-    if let Some(password) = config.password {
-        if let Some(mut stdin) = child.stdin.take() {
+    // Always close stdin so a missing password cannot leave OpenConnect blocked.
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Some(password) = config.password {
             use std::io::Write;
             let _ = writeln!(stdin, "{}", password);
         }
     }
 
+    let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
     *child_guard = Some(child);
 
     Ok(())
@@ -96,56 +203,12 @@ async fn connect_vpn(
 
 #[tauri::command]
 async fn disconnect_vpn(state: State<'_, VpnState>) -> Result<(), String> {
-    // Use absolute path for pkill as defined in sudoers
-    let _ = Command::new("sudo")
-        .arg("-n")
-        .arg("/usr/bin/pkill")
-        .arg("-f")
-        .arg("openconnect")
-        .status();
-
-    std::thread::sleep(std::time::Duration::from_millis(300));
-
-    // Attempt hard kill if still exists
-    let _ = Command::new("sudo")
-        .arg("-n")
-        .arg("/usr/bin/pkill")
-        .arg("-9")
-        .arg("-f")
-        .arg("openconnect")
-        .status();
-
-    let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
-    if let Some(mut child) = child_guard.take() {
-        let _ = child.kill();
-    }
-
-    Ok(())
+    stop_child(&state.child)
 }
 
 #[tauri::command]
-async fn get_vpn_status(_state: State<'_, VpnState>) -> Result<bool, String> {
-    // Check if openconnect process is running - use pgreg -f for better match
-    let pgrep = Command::new("pgrep")
-        .arg("-f")
-        .arg("openconnect")
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !pgrep.status.success() {
-        return Ok(false);
-    }
-
-    // Also check if a tun interface exists
-    let ip_addr = Command::new("ip")
-        .arg("addr")
-        .arg("show")
-        .output()
-        .map_err(|e| e.to_string())?;
-    let output = String::from_utf8_lossy(&ip_addr.stdout);
-
-    // Most VPNs use tun interfaces
-    Ok(output.contains("tun"))
+async fn get_vpn_status(state: State<'_, VpnState>) -> Result<bool, String> {
+    Ok(child_is_running(&state.child) && Path::new("/sys/class/net/globalprotect").exists())
 }
 
 #[tauri::command]
@@ -155,11 +218,20 @@ async fn save_config(app_handle: tauri::AppHandle, config: VpnConfig) -> Result<
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     // Create directory if it doesn't exist
-    std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
+    ensure_private_directory(&app_dir)?;
 
     let path = app_dir.join("vpn_config.json");
     let content = serde_json::to_string(&config).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&path).map_err(|e| e.to_string())?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -181,12 +253,16 @@ async fn load_config(app_handle: tauri::AppHandle) -> Result<Option<VpnConfig>, 
 
 #[tauri::command]
 async fn check_permissions() -> Result<bool, String> {
-    // Check if we can run openconnect with sudo without password
-    // We use -n (non-interactive) to fail if password is required
-    let output = Command::new("sudo")
-        .arg("-n")
-        .arg("openconnect")
-        .arg("--version")
+    let helper_available = Path::new(OPENCONNECT_HELPER).is_file();
+    let command = command_path()?;
+    let mut check = Command::new(sudo_path());
+    check.arg("-n").arg(command);
+    if helper_available {
+        check.arg("--check");
+    } else {
+        check.arg("--version");
+    }
+    let output = check
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -251,24 +327,10 @@ pub fn run() {
                             let _ = window.unminimize();
                             let _ = window.show();
                             let _ = window.set_focus();
-                            let _ = window.set_always_on_top(true);
-                            let _ = window.set_always_on_top(false);
                         }
                     } else if event.id.as_ref() == "quit" {
-                        // Before exiting, disconnect VPN robustly
-                        let _ = Command::new("sudo")
-                            .arg("-n")
-                            .arg("/usr/bin/pkill")
-                            .arg("-f")
-                            .arg("openconnect")
-                            .status();
-                        let _ = Command::new("sudo")
-                            .arg("-n")
-                            .arg("/usr/bin/pkill")
-                            .arg("-9")
-                            .arg("-f")
-                            .arg("openconnect")
-                            .status();
+                        let state = app.state::<VpnState>();
+                        let _ = stop_child(&state.child);
                         app.exit(0);
                     }
                 })
@@ -279,8 +341,6 @@ pub fn run() {
                             let _ = window.unminimize();
                             let _ = window.show();
                             let _ = window.set_focus();
-                            let _ = window.set_always_on_top(true);
-                            let _ = window.set_always_on_top(false);
                         }
                     }
                     _ => {}
@@ -289,20 +349,12 @@ pub fn run() {
 
             // Background thread to update status periodically
             let app_handle = app.handle().clone();
+            let vpn_child = app.state::<VpnState>().child.clone();
             std::thread::spawn(move || {
                 let mut last_connected = false;
                 loop {
-                    let connected = {
-                        let pgrep = Command::new("pgrep").arg("-f").arg("openconnect").output();
-                        let ip_addr = Command::new("ip").arg("addr").arg("show").output();
-
-                        let is_running = pgrep.map(|o| o.status.success()).unwrap_or(false);
-                        let has_tun = ip_addr
-                            .map(|o| String::from_utf8_lossy(&o.stdout).contains("tun"))
-                            .unwrap_or(false);
-
-                        is_running && has_tun
-                    };
+                    let connected = child_is_running(&vpn_child)
+                        && Path::new("/sys/class/net/globalprotect").exists();
 
                     let text = if connected {
                         "Status: Connected ✅"
@@ -319,26 +371,40 @@ pub fn run() {
                             let app_dir = app_handle.path().app_data_dir().unwrap_or_default();
                             let path = app_dir.join("vpn_config.json");
                             if path.exists() {
-                                std::fs::read_to_string(path).ok().and_then(|c| {
-                                    serde_json::from_str::<VpnConfig>(&c).ok()
-                                })
+                                std::fs::read_to_string(path)
+                                    .ok()
+                                    .and_then(|c| serde_json::from_str::<VpnConfig>(&c).ok())
                             } else {
                                 None
                             }
                         };
 
-                        let notifications_enabled = config_res.as_ref().and_then(|c| c.notifications_enabled).unwrap_or(true);
-                        
+                        let notifications_enabled = config_res
+                            .as_ref()
+                            .and_then(|c| c.notifications_enabled)
+                            .unwrap_or(true);
+
                         if notifications_enabled {
                             use tauri_plugin_notification::NotificationExt;
-                            let title = if connected { "VPN Connected" } else { "VPN Disconnected" };
-                            let body = if connected { 
-                                format!("Successfully connected to {}", config_res.as_ref().map(|c| &c.portal).unwrap_or(&"portal".to_string()))
-                            } else { 
+                            let title = if connected {
+                                "VPN Connected"
+                            } else {
+                                "VPN Disconnected"
+                            };
+                            let body = if connected {
+                                format!(
+                                    "Successfully connected to {}",
+                                    config_res
+                                        .as_ref()
+                                        .map(|c| &c.portal)
+                                        .unwrap_or(&"portal".to_string())
+                                )
+                            } else {
                                 "The VPN connection has been closed.".to_string()
                             };
-                            
-                            let _ = app_handle.notification()
+
+                            let _ = app_handle
+                                .notification()
                                 .builder()
                                 .title(title)
                                 .body(body)
@@ -348,9 +414,9 @@ pub fn run() {
                         if let Some(tray) = app_handle.tray_by_id("main-tray") {
                             if connected {
                                 // Try to load the green icon
-                                if let Ok(img) =
-                                    tauri::image::Image::from_path("icons/connected.png")
-                                {
+                                if let Ok(img) = tauri::image::Image::from_bytes(include_bytes!(
+                                    "../icons/connected.png"
+                                )) {
                                     let _ = tray.set_icon(Some(img));
                                 }
                             } else {
@@ -397,22 +463,10 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| match event {
+        .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { .. } => {
-                // Ensure VPN is killed when application fully exits
-                let _ = Command::new("sudo")
-                    .arg("-n")
-                    .arg("/usr/bin/pkill")
-                    .arg("-f")
-                    .arg("openconnect")
-                    .status();
-                let _ = Command::new("sudo")
-                    .arg("-n")
-                    .arg("/usr/bin/pkill")
-                    .arg("-9")
-                    .arg("-f")
-                    .arg("openconnect")
-                    .status();
+                let state = app_handle.state::<VpnState>();
+                let _ = stop_child(&state.child);
             }
             _ => {}
         });

@@ -1,6 +1,6 @@
 [package]
 name = "globalprotect"
-version = "1.2.2"
+version = "1.2.3"
 description = "GlobalProtect for Linux"
 authors = ["you"]
 edition = "2021"
@@ -25,4 +25,3 @@ serde_json = "1"
 tauri-plugin-notification = "2"
 chrono = "0.4.43"
 glib = "0.21.5"
-

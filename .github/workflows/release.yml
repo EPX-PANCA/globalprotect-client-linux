@@ -2,11 +2,14 @@ name: "Release"
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -15,23 +18,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04]
+        platform: [ubuntu-24.04]
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: 'npm'
 
       - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable action
 
       - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -43,19 +46,30 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libnm-dev
+            librsvg2-dev
 
       - name: install frontend dependencies
-        run: npm install
+        run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: validate release inputs
+        run: |
+          chmod 755 src-tauri/globalprotect-helper
+          chmod 440 src-tauri/globalprotect-sudoers
+          test -x src-tauri/globalprotect-helper
+          test "$(stat -c '%a' src-tauri/globalprotect-helper)" = "755"
+          test "$(stat -c '%a' src-tauri/globalprotect-sudoers)" = "440"
+          sh -n src-tauri/globalprotect-helper
+          cargo fmt --all -- --check
+          npm audit --audit-level=high
+          npm run build
+
+      - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
           releaseName: "GlobalProtect v__VERSION__"
-          releaseBody: "### What's New in v1.2.2 🛡️\n\n- **Connection Logs**: New built-in log viewer to monitor VPN activity in real-time.\n- **Shed Light on Security**: New security check feature guides you to fix `sudo` permission issues easily.\n- **Smarter Connectivity**: Improved auto-reconnect logic handles network interruptions gracefully.\n- **UI Polish**: Refined animations and visual consistency across the app."
+          releaseBody: "See the changelog for this release."
           releaseDraft: false
           prerelease: false
           args: --bundles deb,rpm,appimage

@@ -2,10 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.2] - 2026-01-31
+## [1.2.3] - 2026-08-11
 
 ### Added
-- **Connection Logs**: Introduce a dedicated logs view (`Logs`) accessible from the hamburger menu. Users can now view real-time logs of the VPN connection process (`~/.local/share/globalprotect/logs/vpn.log`).
+- **Connection Logs**: Introduce a dedicated logs view (`Logs`) accessible from the hamburger menu. Users can now view real-time logs of the VPN connection process in the per-user application data directory.
 - **Security Permission Check**: Added a proactive check on startup to verify if `openconnect` can be run without a password. If not, a warning and a fix command are displayed in the Settings menu.
 - **Log Management**: Logic to automatically create the log directory if it doesn't exist and a "Clear" button to wipe logs.
 
@@ -17,6 +17,10 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **React Hook Issues**: Resolved `Rendered fewer hooks than expected` error by refactoring the Logs view into its own component.
 - **Compilation Errors**: Fixed duplicate macro definitions in Rust backend.
+- **Auto-Connect**: Use loaded credentials directly so startup auto-connect does not capture empty React state.
+- **Process Isolation**: Stop only the application's VPN process instead of killing every `openconnect` process on the system.
+- **Linux Variants**: Detect OpenConnect from standard `/usr/bin` and `/usr/sbin` paths, use the packaged restricted helper, and remove forced software rendering.
+- **Credential Privacy**: Restrict configuration and log files to mode `0600` in a mode `0700` application directory.
 
 ## [1.2.1] - 2026-01-28
 

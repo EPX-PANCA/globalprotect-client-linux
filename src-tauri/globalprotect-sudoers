@@ -1,2 +1,3 @@
-# Allow all users to run openconnect without a password for GlobalProtect VPN
-ALL ALL=(ALL) NOPASSWD: /usr/sbin/openconnect, /usr/bin/openconnect, /usr/bin/pkill
+# The helper accepts only a portal and username and invokes OpenConnect with
+# the fixed GlobalProtect arguments. It must remain root-owned and mode 0755.
+ALL ALL=(root) NOPASSWD: /usr/libexec/globalprotect/openconnect-helper

@@ -2,6 +2,14 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
+type StoredConfig = {
+  portal: string;
+  username: string;
+  password?: string;
+  notifications_enabled?: boolean;
+  auto_connect?: boolean;
+};
+
 function App() {
   const [portal, setPortal] = useState("");
   const [username, setUsername] = useState("");
@@ -38,7 +46,7 @@ function App() {
 
   const loadStoredConfig = async () => {
     try {
-      const config = await invoke<{ portal: string, username: string, password?: string, notifications_enabled?: boolean, auto_connect?: boolean } | null>("load_config");
+      const config = await invoke<StoredConfig | null>("load_config");
       if (config) {
         setPortal(config.portal);
         setUsername(config.username);
@@ -54,7 +62,11 @@ function App() {
           if (config.auto_connect && config.portal && config.username && config.password) {
             // Use setTimeout to ensure state is settled
             setTimeout(() => {
-              handleConnect(false);
+              void handleConnect(false, {
+                portal: config.portal,
+                username: config.username,
+                password: config.password!,
+              });
             }, 1000);
           }
         }
@@ -90,7 +102,7 @@ function App() {
         return prev;
       });
       // We don't return here, we let the logic proceed or just pause retry counting?
-      // If we return, we stop checking pgrep.
+      // Wait for the network event before attempting a reconnect.
       return;
     }
 
@@ -128,21 +140,28 @@ function App() {
     }
   };
 
-  const handleConnect = async (isRetry = false) => {
+  const handleConnect = async (
+    isRetry = false,
+    configOverride?: { portal: string; username: string; password: string },
+  ) => {
+    const activePortal = configOverride?.portal ?? portal;
+    const activeUsername = configOverride?.username ?? username;
+    const activePassword = configOverride?.password ?? password;
+
     setError(""); // Clear previous errors
     if (!isRetry) {
       setRetryCount(0);
       isManuallyDisconnected.current = false;
     }
 
-    if (!portal) {
+    if (!activePortal) {
       setError("Portal URL is required");
       return;
     }
 
     // If login view is hidden, check if we can auto-connect
     if (!showLogin) {
-      if (username && password) {
+      if (activeUsername && activePassword) {
         // We have credentials, proceed to connecting
       } else {
         setShowLogin(true);
@@ -150,7 +169,7 @@ function App() {
       }
     } else {
       // In login view, check for credentials
-      if (!username || !password) {
+      if (!activeUsername || !activePassword) {
         setError("Please enter username and password");
         return;
       }
@@ -160,15 +179,15 @@ function App() {
     setStatus("connecting");
     try {
       await invoke("connect_vpn", {
-        config: { portal, username, password }
+        config: { portal: activePortal, username: activeUsername, password: activePassword }
       });
 
       // Save config
       await invoke("save_config", {
         config: {
-          portal,
-          username,
-          password: rememberMe ? password : null,
+          portal: activePortal,
+          username: activeUsername,
+          password: rememberMe ? activePassword : null,
           notifications_enabled: notificationsEnabled,
           auto_connect: autoConnect
         }
@@ -245,8 +264,8 @@ function App() {
         <div className="space-y-4">
           <div className="text-red-500 text-5xl mb-4">⚠️</div>
           <h1 className="text-xl font-bold">OpenConnect Not Found</h1>
-          <p className="text-gray-600">Please install openconnect to use this app:</p>
-          <code className="block bg-gray-100 p-2 rounded">sudo apt install openconnect</code>
+          <p className="text-gray-600">Please install OpenConnect using your distribution's package manager.</p>
+          <code className="block bg-gray-100 p-2 rounded">openconnect</code>
           <button
             onClick={checkInstallation}
             className="gp-button w-full mt-4"
@@ -532,10 +551,10 @@ function App() {
                         Root permissions required
                       </p>
                       <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
-                        To fix this, please run the following command to allow GlobalProtect to run without a password:
+                        Install the native package to enable the restricted VPN helper, or follow the development instructions in the README.
                       </p>
                       <div className="bg-gray-900 p-2 rounded text-[9px] font-mono text-blue-300 break-all flex justify-between items-center group relative">
-                        <span>echo "$USER ALL=(ALL) NOPASSWD: /usr/sbin/openconnect" | sudo tee /etc/sudoers.d/globalprotect</span>
+                        <span>Restricted helper required for passwordless VPN access</span>
                       </div>
                     </div>
                   </div>
@@ -625,7 +644,7 @@ function App() {
                   </div>
                   <div className="flex justify-between">
                     <span>Architecture</span>
-                    <span>x86_64 Linux</span>
+                    <span>Linux ({navigator.userAgent.match(/(?:x86_64|aarch64|arm64|armv7l)/i)?.[0] ?? "unknown"})</span>
                   </div>
                 </div>
               </div>
@@ -642,7 +661,7 @@ function App() {
             <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
           </svg>
         </a>
-        <span className="text-[8px]">v1.2.2 for Linux</span>
+        <span className="text-[8px]">v1.2.3 for Linux</span>
       </footer>
     </div >
   );
@@ -737,7 +756,7 @@ const LogsView = ({ onBack }: { onBack: () => void }) => {
         </div>
 
         <p className="text-[10px] text-gray-400 text-center italic">
-          Logs are stored locally at <code className="bg-gray-100 px-1 rounded text-gray-500 not-italic">~/.local/share/com.globalprotect.clone/logs/</code>
+          Logs are stored in the application's per-user data directory.
         </p>
       </div>
     </main>
