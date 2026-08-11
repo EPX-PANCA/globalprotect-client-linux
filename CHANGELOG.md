@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.3] - 2026-08-11
+## [1.2.4] - 2026-08-11
 
 ### Added
 - **Connection Logs**: Introduce a dedicated logs view (`Logs`) accessible from the hamburger menu. Users can now view real-time logs of the VPN connection process in the per-user application data directory.
@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - **Process Isolation**: Stop only the application's VPN process instead of killing every `openconnect` process on the system.
 - **Linux Variants**: Detect OpenConnect from standard `/usr/bin` and `/usr/sbin` paths, use the packaged restricted helper, and remove forced software rendering.
 - **Credential Privacy**: Restrict configuration and log files to mode `0600` in a mode `0700` application directory.
+- **Release Workflow**: Pin release actions and require the stable Rust toolchain explicitly.
 
 ## [1.2.1] - 2026-01-28
 
