@@ -48,22 +48,35 @@ fn command_path() -> Result<PathBuf, String> {
     if Path::new(OPENCONNECT_HELPER).is_file() {
         Ok(PathBuf::from(OPENCONNECT_HELPER))
     } else {
-        openconnect_path()
-            .ok_or_else(|| "OpenConnect was not found in /usr/sbin or /usr/bin".to_string())
+        openconnect_path().ok_or_else(|| {
+            "OpenConnect was not found in standard system paths (/usr/sbin, /usr/bin, /sbin, /bin)"
+                .to_string()
+        })
+    }
+}
+
+fn vpn_interface_up() -> bool {
+    Path::new("/sys/class/net/globalprotect").exists()
+}
+
+fn stop_privileged_vpn() {
+    if Path::new(OPENCONNECT_HELPER).is_file() {
+        let _ = Command::new(sudo_path())
+            .args(["-n", OPENCONNECT_HELPER, "--stop"])
+            .status();
     }
 }
 
 fn stop_child(child: &Arc<Mutex<Option<Child>>>) -> Result<(), String> {
+    // Always stop the root OpenConnect process via the helper. Killing the
+    // sudo child alone can leave the privileged tunnel running, and a
+    // restarted app has no Child handle for the previous session.
+    stop_privileged_vpn();
+
     let mut child_guard = child.lock().map_err(|_| "Failed to lock VPN state")?;
     if let Some(mut process) = child_guard.take() {
         let process_id = process.id();
         let _ = process.kill();
-
-        if !matches!(process.try_wait(), Ok(Some(_))) && Path::new(OPENCONNECT_HELPER).is_file() {
-            let _ = Command::new(sudo_path())
-                .args(["-n", OPENCONNECT_HELPER, "--stop"])
-                .status();
-        }
 
         for _ in 0..20 {
             match process.try_wait() {
@@ -77,24 +90,6 @@ fn stop_child(child: &Arc<Mutex<Option<Child>>>) -> Result<(), String> {
         return Err(format!("Unable to stop VPN process {}", process_id));
     }
     Ok(())
-}
-
-fn child_is_running(child: &Arc<Mutex<Option<Child>>>) -> bool {
-    let Ok(mut child_guard) = child.lock() else {
-        return false;
-    };
-
-    let Some(process) = child_guard.as_mut() else {
-        return false;
-    };
-
-    match process.try_wait() {
-        Ok(None) => true,
-        Ok(Some(_)) | Err(_) => {
-            child_guard.take();
-            false
-        }
-    }
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
@@ -195,6 +190,21 @@ async fn connect_vpn(
         }
     }
 
+    // Catch missing sudo policy, invalid helper args, or a missing binary
+    // instead of waiting for the frontend connection timeout.
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "VPN process exited immediately ({status}). Check logs, portal, username, and helper permissions."
+                ));
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
     let mut child_guard = state.child.lock().map_err(|_| "Failed to lock state")?;
     *child_guard = Some(child);
 
@@ -207,8 +217,10 @@ async fn disconnect_vpn(state: State<'_, VpnState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_vpn_status(state: State<'_, VpnState>) -> Result<bool, String> {
-    Ok(child_is_running(&state.child) && Path::new("/sys/class/net/globalprotect").exists())
+async fn get_vpn_status() -> Result<bool, String> {
+    // The tunnel interface is the source of truth so a restarted app still
+    // sees a leftover connection from a previous session.
+    Ok(vpn_interface_up())
 }
 
 #[tauri::command]
@@ -283,7 +295,10 @@ async fn read_logs(app_handle: tauri::AppHandle) -> Result<String, String> {
         return Ok("No logs found.".to_string());
     }
 
-    std::fs::read_to_string(log_path).map_err(|e| e.to_string())
+    let bytes = std::fs::read(&log_path).map_err(|e| e.to_string())?;
+    const MAX_BYTES: usize = 256 * 1024;
+    let start = bytes.len().saturating_sub(MAX_BYTES);
+    Ok(String::from_utf8_lossy(&bytes[start..]).into_owned())
 }
 
 #[tauri::command]
@@ -295,8 +310,14 @@ async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
     let log_path = app_dir.join("logs").join("vpn.log");
 
     if log_path.exists() {
-        // Truncate file
-        std::fs::write(log_path, "").map_err(|e| e.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).truncate(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(&log_path).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -349,12 +370,10 @@ pub fn run() {
 
             // Background thread to update status periodically
             let app_handle = app.handle().clone();
-            let vpn_child = app.state::<VpnState>().child.clone();
             std::thread::spawn(move || {
                 let mut last_connected = false;
                 loop {
-                    let connected = child_is_running(&vpn_child)
-                        && Path::new("/sys/class/net/globalprotect").exists();
+                    let connected = vpn_interface_up();
 
                     let text = if connected {
                         "Status: Connected ✅"

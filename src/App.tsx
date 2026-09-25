@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -9,6 +9,8 @@ type StoredConfig = {
   notifications_enabled?: boolean;
   auto_connect?: boolean;
 };
+
+type ConnectOverride = { portal: string; username: string; password: string };
 
 function App() {
   const [portal, setPortal] = useState("");
@@ -21,60 +23,28 @@ function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [view, setView] = useState<"main" | "settings" | "about" | "logs">("main");
   const [rememberMe, setRememberMe] = useState(true);
-  const [retryCount, setRetryCount] = useState(0);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [autoConnect, setAutoConnect] = useState(false);
+  const [hasPermissionIssue, setHasPermissionIssue] = useState(false);
   const isManuallyDisconnected = useRef(true);
   const statusRef = useRef(status);
-  const [hasPermissionIssue, setHasPermissionIssue] = useState(false);
+  const retryCountRef = useRef(0);
+  const connectPollRef = useRef<number | null>(null);
+  const autoConnectStarted = useRef(false);
+  const handleConnectRef = useRef<(isRetry?: boolean, configOverride?: ConnectOverride) => Promise<void>>(
+    async () => undefined,
+  );
+
+  const clearConnectPoll = () => {
+    if (connectPollRef.current !== null) {
+      window.clearInterval(connectPollRef.current);
+      connectPollRef.current = null;
+    }
+  };
 
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
-
-  useEffect(() => {
-    checkInstallation();
-    loadStoredConfig();
-    checkPermissions();
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(updateStatus, 2000); // 2s is better for responsiveness
-    return () => clearInterval(interval);
-  }, [status, retryCount, portal, username, password]); // Depend on relevant state to avoid stale closures
-
-
-  const loadStoredConfig = async () => {
-    try {
-      const config = await invoke<StoredConfig | null>("load_config");
-      if (config) {
-        setPortal(config.portal);
-        setUsername(config.username);
-        if (config.password) {
-          setPassword(config.password);
-        }
-        if (config.notifications_enabled !== undefined && config.notifications_enabled !== null) {
-          setNotificationsEnabled(config.notifications_enabled);
-        }
-        if (config.auto_connect !== undefined && config.auto_connect !== null) {
-          setAutoConnect(config.auto_connect);
-          // If auto-connect is enabled and we have everything we need, try to connect
-          if (config.auto_connect && config.portal && config.username && config.password) {
-            // Use setTimeout to ensure state is settled
-            setTimeout(() => {
-              void handleConnect(false, {
-                portal: config.portal,
-                username: config.username,
-                password: config.password!,
-              });
-            }, 1000);
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Failed to load config", e);
-    }
-  };
 
   const checkInstallation = async () => {
     const installed = await invoke<boolean>("check_openconnect");
@@ -83,75 +53,26 @@ function App() {
 
   const checkPermissions = async () => {
     try {
-      // Returns true if permissions are OK (passwordless), false if permission denied (needs password)
       const isOk = await invoke<boolean>("check_permissions");
       setHasPermissionIssue(!isOk);
     } catch (e) {
       console.error("Failed to check permissions", e);
-      // Assume issue if check fails
       setHasPermissionIssue(true);
     }
   };
 
-  const updateStatus = async () => {
-    // If offline, we want to show "Connecting..." (reconnecting) instead of "Connected"
-    // This gives immediate feedback that something is wrong without kicking the user to login.
-    if (!navigator.onLine) {
-      setStatus(prev => {
-        if (prev === 'connected') return 'connecting';
-        return prev;
-      });
-      // We don't return here, we let the logic proceed or just pause retry counting?
-      // Wait for the network event before attempting a reconnect.
-      return;
-    }
-
-    try {
-      const isRunning = await invoke<boolean>("get_vpn_status");
-
-      setStatus(currentStatus => {
-        if (isRunning) {
-          if (currentStatus !== "connected") {
-            setRetryCount(0);
-          }
-          return "connected";
-        } else {
-          // If we are currently "connected" and it stops running, start retry logic
-          if (currentStatus === "connected") {
-            if (!isManuallyDisconnected.current && retryCount < 5) {
-              const nextRetry = retryCount + 1;
-              setRetryCount(nextRetry);
-              setError(`Connection lost. Retrying (${nextRetry}/5)...`);
-              setTimeout(() => handleConnect(true), 5000);
-            } else if (!isManuallyDisconnected.current && retryCount >= 5) {
-              setError("Connection failed after 5 attempts.");
-            }
-            return "disconnected";
-          }
-          // If we are already in a transition state, DON'T overwrite it with "disconnected"
-          if (currentStatus === "connecting" || currentStatus === "disconnecting") {
-            return currentStatus;
-          }
-          return "disconnected";
-        }
-      });
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleConnect = async (
+  const handleConnect = useCallback(async (
     isRetry = false,
-    configOverride?: { portal: string; username: string; password: string },
+    configOverride?: ConnectOverride,
   ) => {
     const activePortal = configOverride?.portal ?? portal;
     const activeUsername = configOverride?.username ?? username;
     const activePassword = configOverride?.password ?? password;
 
-    setError(""); // Clear previous errors
     if (!isRetry) {
-      setRetryCount(0);
+      retryCountRef.current = 0;
       isManuallyDisconnected.current = false;
+      setError("");
     }
 
     if (!activePortal) {
@@ -159,30 +80,28 @@ function App() {
       return;
     }
 
-    // If login view is hidden, check if we can auto-connect
     if (!showLogin) {
-      if (activeUsername && activePassword) {
-        // We have credentials, proceed to connecting
-      } else {
+      if (!activeUsername || !activePassword) {
         setShowLogin(true);
         return;
       }
-    } else {
-      // In login view, check for credentials
-      if (!activeUsername || !activePassword) {
-        setError("Please enter username and password");
-        return;
-      }
+    } else if (!activeUsername || !activePassword) {
+      setError("Please enter username and password");
+      return;
     }
 
-    setError("");
+    clearConnectPoll();
+    statusRef.current = "connecting";
     setStatus("connecting");
+    if (!isRetry) {
+      setError("");
+    }
+
     try {
       await invoke("connect_vpn", {
         config: { portal: activePortal, username: activeUsername, password: activePassword }
       });
 
-      // Save config
       await invoke("save_config", {
         config: {
           portal: activePortal,
@@ -193,69 +112,198 @@ function App() {
         }
       });
 
-      // Polling for success with timeout
       let attempts = 0;
-      const checkInterval = setInterval(async () => {
+      connectPollRef.current = window.setInterval(async () => {
+        if (isManuallyDisconnected.current) {
+          clearConnectPoll();
+          return;
+        }
+
         attempts++;
-        const isUp = await invoke<boolean>("get_vpn_status");
-        if (isUp) {
-          setStatus("connected");
-          clearInterval(checkInterval);
-        } else if (attempts > 15) { // 15 seconds timeout
-          clearInterval(checkInterval);
-          setStatus(curr => curr === "connected" ? "connected" : "disconnected");
-          setError("Connection timeout. Please check your credentials/portal.");
+        try {
+          const isUp = await invoke<boolean>("get_vpn_status");
+          if (isUp) {
+            clearConnectPoll();
+            retryCountRef.current = 0;
+            statusRef.current = "connected";
+            setStatus("connected");
+            setError("");
+          } else if (attempts > 15) {
+            clearConnectPoll();
+            if (!isManuallyDisconnected.current && statusRef.current !== "connected") {
+              statusRef.current = "disconnected";
+              setStatus("disconnected");
+              setError("Connection timeout. Please check your credentials/portal.");
+            }
+          }
+        } catch (pollError) {
+          console.error(pollError);
         }
       }, 1000);
-
-    } catch (e: any) {
-      setError(e.toString());
+    } catch (e: unknown) {
+      setError(String(e));
+      statusRef.current = "disconnected";
       setStatus("disconnected");
     }
-  };
+  }, [portal, username, password, showLogin, rememberMe, notificationsEnabled, autoConnect]);
 
-  const handleDisconnect = async () => {
+  handleConnectRef.current = handleConnect;
+
+  const handleDisconnect = useCallback(async () => {
     isManuallyDisconnected.current = true;
-    setRetryCount(0);
+    retryCountRef.current = 0;
+    clearConnectPoll();
+    statusRef.current = "disconnecting";
     setStatus("disconnecting");
+    setError("");
     try {
       await invoke("disconnect_vpn");
-      // Give it a moment to clear
-      setTimeout(() => {
+      window.setTimeout(() => {
+        statusRef.current = "disconnected";
         setStatus("disconnected");
         setShowLogin(false);
       }, 800);
-    } catch (e: any) {
-      setError(e.toString());
-      setStatus("connected"); // Revert if failed
+    } catch (e: unknown) {
+      isManuallyDisconnected.current = false;
+      setError(String(e));
+      statusRef.current = "connected";
+      setStatus("connected");
     }
-  };
+  }, []);
 
-  // Listen for network events
+  useEffect(() => {
+    const loadStoredConfig = async () => {
+      try {
+        const config = await invoke<StoredConfig | null>("load_config");
+        if (!config) {
+          return;
+        }
+
+        setPortal(config.portal);
+        setUsername(config.username);
+        if (config.password) {
+          setPassword(config.password);
+        }
+        if (config.notifications_enabled !== undefined && config.notifications_enabled !== null) {
+          setNotificationsEnabled(config.notifications_enabled);
+        }
+        if (config.auto_connect !== undefined && config.auto_connect !== null) {
+          setAutoConnect(config.auto_connect);
+        }
+        if (
+          config.auto_connect &&
+          config.portal &&
+          config.username &&
+          config.password &&
+          !autoConnectStarted.current
+        ) {
+          autoConnectStarted.current = true;
+          window.setTimeout(() => {
+            void handleConnectRef.current(false, {
+              portal: config.portal,
+              username: config.username,
+              password: config.password!,
+            });
+          }, 1000);
+        }
+      } catch (e) {
+        console.error("Failed to load config", e);
+      }
+    };
+
+    void checkInstallation();
+    void loadStoredConfig();
+    void checkPermissions();
+  }, []);
+
+  useEffect(() => {
+    const updateStatus = async () => {
+      if (!navigator.onLine) {
+        if (statusRef.current === "connected") {
+          statusRef.current = "connecting";
+          setStatus("connecting");
+          setError("Network connection lost. Waiting for internet...");
+        }
+        return;
+      }
+
+      try {
+        const isRunning = await invoke<boolean>("get_vpn_status");
+        if (isRunning) {
+          if (statusRef.current === "disconnecting") {
+            return;
+          }
+          retryCountRef.current = 0;
+          statusRef.current = "connected";
+          setStatus("connected");
+          return;
+        }
+
+        if (isManuallyDisconnected.current) {
+          if (statusRef.current !== "connecting" && statusRef.current !== "disconnecting") {
+            statusRef.current = "disconnected";
+            setStatus("disconnected");
+          }
+          return;
+        }
+
+        if (statusRef.current === "connected") {
+          statusRef.current = "connecting";
+          setStatus("connecting");
+          const nextRetry = retryCountRef.current + 1;
+          if (nextRetry <= 5) {
+            retryCountRef.current = nextRetry;
+            setError(`Connection lost. Retrying (${nextRetry}/5)...`);
+            window.setTimeout(() => {
+              if (!isManuallyDisconnected.current) {
+                void handleConnectRef.current(true);
+              }
+            }, 5000);
+          } else {
+            setError("Connection failed after 5 attempts.");
+            statusRef.current = "disconnected";
+            setStatus("disconnected");
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      void updateStatus();
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const handleOffline = () => {
-      // When offline, switch to 'connecting' to indicate we are waiting for network
-      if (statusRef.current === 'connected') {
+      if (statusRef.current === "connected") {
+        statusRef.current = "connecting";
         setStatus("connecting");
         setError("Network connection lost. Waiting for internet...");
       }
     };
 
     const handleOnline = () => {
-      // When back online, if we were waiting (connecting) and not manually disconnected, try to reconnect
-      if (statusRef.current === 'connecting' && !isManuallyDisconnected.current) {
-        // Add a small delay to ensure network interfaces are up
-        setTimeout(() => handleConnect(true), 1000);
+      if (statusRef.current === "connecting" && !isManuallyDisconnected.current) {
+        window.setTimeout(() => {
+          if (!isManuallyDisconnected.current && navigator.onLine) {
+            void handleConnectRef.current(true);
+          }
+        }, 1000);
       }
     };
 
-    window.addEventListener('offline', handleOffline);
-    window.addEventListener('online', handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
     return () => {
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('online', handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
     };
-  }, [handleConnect]); // handleConnect is a dependency
+  }, []);
+
+  useEffect(() => () => clearConnectPoll(), []);
 
 
   if (ocInstalled === false) {
@@ -457,6 +505,28 @@ function App() {
             </div>
           )}
 
+          {status === 'connecting' && (
+            <div className="w-full text-center space-y-6">
+              <div className="flex flex-col items-center space-y-4">
+                <div className="w-10 h-10 border-4 border-gray-300 border-t-gp-blue rounded-full animate-spin"></div>
+                <div className="space-y-1">
+                  <p className="text-gray-600 font-medium tracking-tight">
+                    {error || "Establishing secure connection..."}
+                  </p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                    {portal || "Waiting for portal"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => { void handleDisconnect(); }}
+                className="gp-button-secondary text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {status === 'disconnecting' && (
             <div className="w-full w-full text-center space-y-6">
               <div className="flex flex-col items-center space-y-4">
@@ -567,7 +637,19 @@ function App() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Display Notifications</span>
                     <button
-                      onClick={() => setNotificationsEnabled(!notificationsEnabled)}
+                      onClick={() => {
+                        const next = !notificationsEnabled;
+                        setNotificationsEnabled(next);
+                        void invoke("save_config", {
+                          config: {
+                            portal,
+                            username,
+                            password: rememberMe ? password : null,
+                            notifications_enabled: next,
+                            auto_connect: autoConnect
+                          }
+                        }).catch((e) => console.error(e));
+                      }}
                       className={`w-10 h-5 rounded-full relative transition-colors duration-200 focus:outline-none ${notificationsEnabled ? 'bg-gp-blue' : 'bg-gray-300'}`}
                     >
                       <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 ${notificationsEnabled ? 'right-0.5' : 'left-0.5'}`}></div>
@@ -576,7 +658,19 @@ function App() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Auto-Connect on Startup</span>
                     <button
-                      onClick={() => setAutoConnect(!autoConnect)}
+                      onClick={() => {
+                        const next = !autoConnect;
+                        setAutoConnect(next);
+                        void invoke("save_config", {
+                          config: {
+                            portal,
+                            username,
+                            password: rememberMe ? password : null,
+                            notifications_enabled: notificationsEnabled,
+                            auto_connect: next
+                          }
+                        }).catch((e) => console.error(e));
+                      }}
                       className={`w-10 h-5 rounded-full relative transition-colors duration-200 focus:outline-none ${autoConnect ? 'bg-gp-blue' : 'bg-gray-300'}`}
                     >
                       <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-200 ${autoConnect ? 'right-0.5' : 'left-0.5'}`}></div>
@@ -661,7 +755,7 @@ function App() {
             <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
           </svg>
         </a>
-        <span className="text-[8px]">v1.2.5 for Linux</span>
+        <span className="text-[8px]">v1.2.6 for Linux</span>
       </footer>
     </div >
   );

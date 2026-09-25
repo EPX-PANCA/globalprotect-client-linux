@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.6] - 2026-09-25
+
+### Fixed
+- **Disconnect cleanup**: Always stop the privileged OpenConnect process through the helper, including leftover tunnels after an app restart.
+- **Connection status**: Treat the `globalprotect` interface as the source of truth so a restarted client still shows an existing VPN session.
+- **Reconnect UX**: Keep the app in Connecting after an unexpected drop, surface retry messages, and allow cancel while connecting.
+- **Connect polling**: Clear the connection timeout timer on disconnect so a cancelled attempt cannot overwrite the UI.
+- **Helper startup**: Validate usernames, locate OpenConnect before writing a pid file, and fail fast when sudo/helper startup exits immediately.
+- **Logs viewer**: Read only the latest log tail so a large `vpn.log` cannot freeze the window.
+- **Preferences**: Persist notification and auto-connect toggles immediately.
+
 ## [1.2.5] - 2026-08-11
 
 ### Added

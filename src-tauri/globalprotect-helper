@@ -18,7 +18,7 @@ if [ "${1:-}" = "--stop" ] && [ "$#" -eq 1 ]; then
         ""|*[!0-9]*) rm -f "$pid_file"; exit 64 ;;
     esac
 
-    if [ -r "/proc/$pid/cmdline" ] && tr '\000' ' ' < "/proc/$pid/cmdline" | grep -q '/openconnect '; then
+    if [ -r "/proc/$pid/cmdline" ] && tr '\000' ' ' < "/proc/$pid/cmdline" | grep -Eq '(^|/)openconnect([[:space:]]|$)'; then
         kill -TERM "$pid" 2>/dev/null || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
             kill -0 "$pid" 2>/dev/null || break
@@ -32,7 +32,7 @@ fi
 
 # Keep the privileged surface small: only the fixed GlobalProtect invocation is allowed.
 if [ "${1:-}" = "--check" ] && [ "$#" -eq 1 ]; then
-    for binary in /usr/sbin/openconnect /usr/bin/openconnect; do
+    for binary in /usr/sbin/openconnect /usr/bin/openconnect /sbin/openconnect /bin/openconnect; do
         if [ -x "$binary" ]; then
             exec "$binary" --version
         fi
@@ -47,18 +47,26 @@ fi
 portal=$1
 username=$2
 
-# Reject option injection and shell whitespace while allowing normal VPN URLs.
+# Reject option injection and shell metacharacters while allowing normal VPN URLs
+# and corporate usernames (user@domain, DOMAIN\user).
 case "$portal" in
     ""|-*|*[!A-Za-z0-9./:_?%+\&=-]*) exit 64 ;;
 esac
+case "$username" in
+    ""|-*|*[!A-Za-z0-9._@\\/+-]*) exit 64 ;;
+esac
+
+binary=""
+for candidate in /usr/sbin/openconnect /usr/bin/openconnect /sbin/openconnect /bin/openconnect; do
+    if [ -x "$candidate" ]; then
+        binary=$candidate
+        break
+    fi
+done
+if [ -z "$binary" ]; then
+    exit 127
+fi
 
 mkdir -p /run/globalprotect
 printf '%s\n' "$$" > "$pid_file"
-
-for binary in /usr/sbin/openconnect /usr/bin/openconnect; do
-    if [ -x "$binary" ]; then
-        exec "$binary" --protocol=gp --passwd-on-stdin --interface=globalprotect "$portal" "--user=$username"
-    fi
-done
-
-exit 127
+exec "$binary" --protocol=gp --passwd-on-stdin --interface=globalprotect "$portal" --user "$username"
